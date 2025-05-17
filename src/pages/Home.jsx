@@ -1,48 +1,49 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useContext } from 'react'
 import { toast } from 'react-toastify'
 import { motion } from 'framer-motion'
 import MainFeature from '../components/MainFeature'
 import { getIcon } from '../utils/iconUtils'
+import { fetchTasks } from '../services/taskService'
+import { AuthContext } from '../App'
 
 function Home() {
+  // Get auth context
+  const { isAuthenticated } = useContext(AuthContext);
+  
   // Set up icons
   const ClipboardListIcon = getIcon('ClipboardList')
   const CheckCircleIcon = getIcon('CheckCircle')
   const ClockIcon = getIcon('Clock')
   
   // State for metrics
+  const [isLoading, setIsLoading] = useState(true);
   const [metrics, setMetrics] = useState({
     total: 0,
     completed: 0,
     pending: 0
   })
 
-  // Function to update metrics based on task changes
-  const updateMetrics = (tasks) => {
+  // Calculate metrics based on tasks
+  const calculateMetrics = (tasks) => {
     const completed = tasks.filter(task => task.status === 'completed').length
     setMetrics({
       total: tasks.length,
       completed: completed,
       pending: tasks.length - completed
     })
-  }
+  };
 
   // Function to handle task changes from MainFeature component
   const handleTasksChange = (updatedTasks) => {
-    updateMetrics(updatedTasks)
-    
-    // Save tasks to localStorage
-    localStorage.setItem('tasks', JSON.stringify(updatedTasks))
-  }
+    calculateMetrics(updatedTasks);
+  };
 
-  // Load tasks from localStorage on component mount
+  // Load initial metrics
   useEffect(() => {
-    try {
-      const savedTasks = JSON.parse(localStorage.getItem('tasks')) || []
-      updateMetrics(savedTasks)
-    } catch (error) {
-      console.error('Error loading tasks from localStorage:', error)
-      toast.error("Failed to load your tasks. Starting fresh.")
+    if (isAuthenticated) {
+      fetchTasks().then(tasks => calculateMetrics(tasks)).catch(error => {
+        console.error('Error fetching initial metrics:', error);
+      });
     }
   }, [])
 

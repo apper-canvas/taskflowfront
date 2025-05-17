@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'react-toastify'
 import { format } from 'date-fns'
 import { getIcon } from '../utils/iconUtils'
+import { fetchTasks, createTask, updateTask, deleteTask } from '../services/taskService'
 
 function MainFeature({ onTasksChange }) {
   // Setting up icons
@@ -14,6 +15,7 @@ function MainFeature({ onTasksChange }) {
   const FilterIcon = getIcon('Filter')
   const SortIcon = getIcon('ArrowUpDown')
   const InfoIcon = getIcon('Info')
+  const ClipboardListIcon = getIcon('ClipboardList')
 
   // Define default task structure
   const defaultTask = {
@@ -28,6 +30,7 @@ function MainFeature({ onTasksChange }) {
 
   // State for tasks and form
   const [tasks, setTasks] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
   const [newTask, setNewTask] = useState({...defaultTask})
   const [isFormVisible, setIsFormVisible] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -36,52 +39,38 @@ function MainFeature({ onTasksChange }) {
   const [filter, setFilter] = useState('all')
   const [sortBy, setSortBy] = useState('createdAt')
   const [sortOrder, setSortOrder] = useState('desc')
+  const [submitting, setSubmitting] = useState(false)
 
-  // Load tasks from localStorage on component mount
+  // Load tasks from backend on component mount
   useEffect(() => {
+    loadTasks();
+  }, [filter, sortBy, sortOrder])
+
+  // Function to load tasks from the backend
+  const loadTasks = async () => {
+    setIsLoading(true);
     try {
-      const savedTasks = JSON.parse(localStorage.getItem('tasks')) || []
-      setTasks(savedTasks)
+      const tasksData = await fetchTasks(filter, sortBy, sortOrder);
+      setTasks(tasksData);
+      onTasksChange(tasksData);
     } catch (error) {
-      console.error('Error loading tasks from localStorage:', error)
-      setTasks([])
+      console.error('Failed to load tasks:', error);
+      toast.error('Failed to load tasks. Please try again.');
+      setTasks([]);
+    } finally {
+      setIsLoading(false);
     }
-  }, [])
+  };
 
   // Update parent component when tasks change
   useEffect(() => {
     onTasksChange(tasks)
   }, [tasks, onTasksChange])
 
-  // Filter and sort tasks
-  const filteredAndSortedTasks = [...tasks]
-    .filter(task => {
-      if (filter === 'all') return true
-      return task.status === filter
-    })
-    .sort((a, b) => {
-      if (sortBy === 'priority') {
-        const priorityOrder = { high: 0, medium: 1, low: 2 }
-        if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
-          return sortOrder === 'asc' 
-            ? priorityOrder[a.priority] - priorityOrder[b.priority]
-            : priorityOrder[b.priority] - priorityOrder[a.priority]
-        }
-      }
-      
-      if (sortBy === 'dueDate') {
-        if (!a.dueDate) return sortOrder === 'asc' ? 1 : -1
-        if (!b.dueDate) return sortOrder === 'asc' ? -1 : 1
-        return sortOrder === 'asc' 
-          ? new Date(a.dueDate) - new Date(b.dueDate)
-          : new Date(b.dueDate) - new Date(a.dueDate)
-      }
-      
-      // Default sort by createdAt
-      return sortOrder === 'asc' 
-        ? new Date(a.createdAt) - new Date(b.createdAt)
-        : new Date(b.createdAt) - new Date(a.createdAt)
-    })
+  // UseEffect for filter/sort changes
+  useEffect(() => {
+    // We'll let the backend handle filtering and sorting
+  }, [filter, sortBy, sortOrder]);
 
   // Handle form input changes
   const handleInputChange = (e) => {
@@ -90,52 +79,58 @@ function MainFeature({ onTasksChange }) {
   }
 
   // Handle form submission
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     
     if (!newTask.title.trim()) {
       toast.error("Please enter a task title")
       return
     }
+    
+    setSubmitting(true);
 
-    if (isEditing) {
-      // Update existing task
-      const updatedTasks = tasks.map(task => 
-        task.id === newTask.id ? newTask : task
-      )
-      setTasks(updatedTasks)
-      toast.success("Task updated successfully")
-    } else {
-      // Add new task
-      const taskToAdd = {
-        ...newTask,
-        id: Date.now().toString(),
-        createdAt: new Date().toISOString()
+    try {
+      if (isEditing) {
+        // Update existing task
+        await updateTask(newTask);
+        toast.success("Task updated successfully");
+      } else {
+        // Add new task
+        await createTask(newTask);
+        toast.success("Task added successfully");
       }
-      setTasks(prev => [...prev, taskToAdd])
-      toast.success("Task added successfully")
+      
+      // Reload tasks to get the updated list
+      await loadTasks();
+      
+      // Reset form
+      setNewTask({...defaultTask});
+      setIsFormVisible(false);
+      setIsEditing(false);
+    } catch (error) {
+      toast.error(isEditing ? "Failed to update task" : "Failed to add task");
+    } finally {
+      setSubmitting(false);
     }
-
-    // Reset form
-    setNewTask({...defaultTask})
-    setIsFormVisible(false)
-    setIsEditing(false)
   }
 
   // Toggle task status
-  const toggleTaskStatus = (id) => {
-    const updatedTasks = tasks.map(task => {
-      if (task.id === id) {
-        const newStatus = task.status === 'completed' ? 'pending' : 'completed'
-        return { ...task, status: newStatus }
-      }
-      return task
-    })
+  const toggleTaskStatus = async (id) => {
+    try {
+      const taskToUpdate = tasks.find(task => task.id === id);
+      if (!taskToUpdate) return;
+      
+      const newStatus = taskToUpdate.status === 'completed' ? 'pending' : 'completed';
+      const updatedTask = { ...taskToUpdate, status: newStatus };
+      
+      await updateTask(updatedTask);
+      await loadTasks();
     
-    setTasks(updatedTasks)
-    
-    const taskStatus = updatedTasks.find(t => t.id === id).status
-    toast.info(`Task marked as ${taskStatus}`)
+      toast.info(`Task marked as ${newStatus}`);
+    } catch (error) {
+      console.error('Error toggling task status:', error);
+      toast.error('Failed to update task status');
+    }
   }
 
   // Edit task
@@ -149,10 +144,19 @@ function MainFeature({ onTasksChange }) {
     }
   }
 
-  // Delete task
-  const deleteTask = (id) => {
-    setTasks(prev => prev.filter(task => task.id !== id))
-    setDetailsTaskId(null)
+  // Delete task function
+  const handleDeleteTask = async (id) => {
+    try {
+      await deleteTask(id);
+      
+      // Reload tasks
+      await loadTasks();
+      setDetailsTaskId(null);
+      
+      toast.success("Task deleted successfully");
+    } catch (error) {
+      toast.error("Failed to delete task");
+    }
     toast.success("Task deleted successfully")
   }
 
@@ -393,8 +397,16 @@ function MainFeature({ onTasksChange }) {
 
       {/* Task List */}
       <div className="divide-y divide-surface-200 dark:divide-surface-700 max-h-[600px] overflow-auto">
-        {filteredAndSortedTasks.length > 0 ? (
-          filteredAndSortedTasks.map(task => (
+        {isLoading ? (
+          <div className="p-8 text-center">
+            <div className="bg-surface-100 dark:bg-surface-800 inline-flex items-center justify-center w-16 h-16 rounded-full mb-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+            <h3 className="text-lg font-medium text-surface-900 dark:text-white mb-1">Loading tasks...</h3>
+            <p className="text-surface-500 dark:text-surface-400">Please wait while we fetch your tasks.</p>
+          </div>
+        ) : tasks.length > 0 ? (
+          tasks.map(task => (
             <div 
               key={task.id} 
               className={`p-4 transition-colors ${selectedTaskId === task.id ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-surface-50 dark:hover:bg-surface-700/50'}`}
@@ -462,7 +474,7 @@ function MainFeature({ onTasksChange }) {
                       </button>
                       
                       <button 
-                        onClick={() => deleteTask(task.id)}
+                        onClick={() => handleDeleteTask(task.id)}
                         className="p-1.5 text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"
                         aria-label="Delete task"
                       >
@@ -516,7 +528,7 @@ function MainFeature({ onTasksChange }) {
             <p className="text-surface-500 dark:text-surface-400 max-w-md mx-auto">
               {filter === 'all' 
                 ? "You don't have any tasks yet. Click 'Add Task' to create your first task."
-                : `You don't have any ${filter} tasks. Try changing the filter or adding new tasks.`}
+                : `You don't have any tasks with status "${filter}". Try changing the filter or adding new tasks.`}
             </p>
           </div>
         )}
